@@ -1,0 +1,277 @@
+"""
+MovieGraphPy - Neo4j Movies Demo Veritabanı
+Kocaeli Sağlık ve Teknoloji Üniversitesi
+Programlama Lab I - Proje 3
+"""
+
+from neo4j import GraphDatabase
+import json
+import os
+
+# ------------------ Neo4j Bağlantı Ayarları ------------------
+URI = "bolt://localhost:7687"
+USERNAME = "neo4j"
+PASSWORD = "123123654eF."
+# Global değişkenler
+driver = None
+selected_movie = None
+search_results = []
+
+
+# ------------------ 1. BAĞLANTI ------------------
+def connect_to_neo4j():
+    """Neo4j veritabanına bağlanır"""
+    global driver
+    try:
+        driver = GraphDatabase.driver(URI, auth=(USERNAME, PASSWORD))
+        driver.verify_connectivity()
+        print("✓ Neo4j bağlantısı başarılı!")
+        return True
+    except Exception as e:
+        print(f"✗ Bağlantı hatası: {e}")
+        return False
+
+
+# ------------------ 2. FİLM ARA (1. Menü Seçeneği) ------------------
+def search_movies():
+    """Film adına göre arama yapar"""
+    global search_results
+
+    keyword = input("Aranacak film adı: ").strip()
+
+    if not keyword:
+        print("Hata: Boş arama yapılamaz!")
+        return
+
+    query = """
+    MATCH (m:Movie)
+    WHERE toLower(m.title) CONTAINS toLower($keyword)
+    RETURN m.title AS title, m.released AS year, m.tagline AS tagline
+    ORDER BY m.title
+    LIMIT 20
+    """
+
+    try:
+        with driver.session() as session:
+            results = session.run(query, keyword=keyword)
+            search_results = []
+
+            print(f"\n'{keyword}' için sonuçlar:")
+            print("-" * 40)
+
+            for i, record in enumerate(results, 1):
+                title = record["title"]
+                year = record["year"]
+                search_results.append({"title": title, "year": year})
+                print(f"{i}) {title} ({year})")
+
+            if not search_results:
+                print("Film bulunamadı.")
+
+    except Exception as e:
+        print(f"Arama hatası: {e}")
+
+
+# ------------------ 3. FİLM DETAYI (2. Menü Seçeneği) ------------------
+def show_movie_details():
+    """Seçilen filmin detaylarını gösterir"""
+    global selected_movie
+
+    if not search_results:
+        print("Önce film araması yapmalısınız!")
+        return
+
+    try:
+        # Kullanıcıdan film seçimi
+        choice = int(input(f"Film numarası (1-{len(search_results)}): "))
+
+        if choice < 1 or choice > len(search_results):
+            print("Geçersiz numara!")
+            return
+
+        selected_movie = search_results[choice - 1]["title"]
+        movie_title = selected_movie
+
+        # Detay sorgusu
+        query = """
+        MATCH (m:Movie {title: $title})
+        OPTIONAL MATCH (m)<-[:DIRECTED]-(director:Person)
+        OPTIONAL MATCH (m)<-[:ACTED_IN]-(actor:Person)
+        RETURN m.title AS title, 
+               m.released AS year, 
+               m.tagline AS tagline,
+               collect(DISTINCT director.name) AS directors,
+               collect(DISTINCT actor.name) AS actors
+        """
+
+        with driver.session() as session:
+            result = session.run(query, title=movie_title)
+            movie = result.single()
+
+            # Film bilgilerini göster
+            print("\n" + "=" * 50)
+            print("FİLM DETAYLARI")
+            print("=" * 50)
+            print(f"Başlık: {movie['title']}")
+            print(f"Yıl: {movie['year']}")
+            print(f"Tagline: {movie['tagline'] if movie['tagline'] else 'Yok'}")
+
+            # Yönetmenler
+            print(f"\nYönetmen(ler):")
+            if movie['directors']:
+                for i, director in enumerate(movie['directors'], 1):
+                    print(f"  {i}. {director}")
+            else:
+                print("  Bilgi yok")
+
+            # Oyuncular (ilk 5)
+            print(f"\nOyuncular (ilk 5):")
+            if movie['actors']:
+                for i, actor in enumerate(movie['actors'][:5], 1):
+                    print(f"  {i}. {actor}")
+            else:
+                print("  Bilgi yok")
+            print("=" * 50)
+
+    except ValueError:
+        print("Hata: Geçerli bir sayı girin!")
+    except Exception as e:
+        print(f"Detay hatası: {e}")
+
+
+# ------------------ 4. GRAPH.JSON OLUŞTUR (3. Menü Seçeneği) ------------------
+def create_graph_json():
+    """Seçilen film için graph.json dosyası oluşturur"""
+
+    if not selected_movie:
+        print("Önce bir film seçmelisiniz!")
+        return
+
+    movie_title = selected_movie
+
+    # Graf verilerini çek
+    query = """
+    MATCH (m:Movie {title: $title})
+    OPTIONAL MATCH (m)<-[r]-(p:Person)
+    WHERE type(r) IN ['ACTED_IN', 'DIRECTED']
+    RETURN m, p, type(r) AS relation_type
+    """
+
+    try:
+        with driver.session() as session:
+            results = session.run(query, title=movie_title)
+
+            nodes = []
+            links = []
+            node_ids = {}
+            node_counter = 0
+
+            # Düğüm ve bağlantıları topla
+            for record in results:
+                movie = record["m"]
+                person = record["p"]
+                rel_type = record["relation_type"]
+
+                # Film düğümü
+                if movie["title"] not in node_ids:
+                    nodes.append({
+                        "id": node_counter,
+                        "label": movie["title"],
+                        "type": "Movie",
+                        "year": movie.get("released"),
+                        "tagline": movie.get("tagline")
+                    })
+                    node_ids[movie["title"]] = node_counter
+                    node_counter += 1
+
+                # Kişi düğümü
+                if person and person["name"] not in node_ids:
+                    nodes.append({
+                        "id": node_counter,
+                        "label": person["name"],
+                        "type": "Person",
+                        "born": person.get("born")
+                    })
+                    node_ids[person["name"]] = node_counter
+                    node_counter += 1
+
+                # Bağlantı
+                if person:
+                    links.append({
+                        "source": node_ids[person["name"]],
+                        "target": node_ids[movie["title"]],
+                        "type": rel_type
+                    })
+
+        # JSON yapısı
+        graph_data = {
+            "nodes": nodes,
+            "links": links
+        }
+
+        # exports klasörüne kaydet
+        os.makedirs("exports", exist_ok=True)
+
+        with open("exports/graph.json", "w", encoding="utf-8") as f:
+            json.dump(graph_data, f, indent=2, ensure_ascii=False)
+
+        print(f"✓ graph.json oluşturuldu: exports/graph.json")
+        print(f"  {len(nodes)} düğüm, {len(links)} bağlantı")
+
+    except Exception as e:
+        print(f"JSON oluşturma hatası: {e}")
+
+
+# ------------------ 5. ANA MENÜ ------------------
+def show_menu():
+    """Ana menüyü gösterir ve seçimleri işler"""
+
+    while True:
+        print("\n" + "=" * 40)
+        print("MOVIE GRAPHPY - NEO4J")
+        print("=" * 40)
+        print("1. Film Ara")
+        print("2. Film Detayı Göster")
+        print("3. Seçili Film için graph.json Oluştur")
+        print("4. Çıkış")
+        print("=" * 40)
+
+        choice = input("Seçiminiz (1-4): ").strip()
+
+        if choice == "1":
+            search_movies()
+        elif choice == "2":
+            show_movie_details()
+        elif choice == "3":
+            create_graph_json()
+        elif choice == "4":
+            print("Program sonlandırılıyor...")
+            break
+        else:
+            print("Geçersiz seçim! 1-4 arası bir sayı girin.")
+
+
+# ------------------ 6. ANA PROGRAM ------------------
+def main():
+    """Programı başlatır"""
+
+    print("MovieGraphPy - Neo4j Film Veritabanı Uygulaması")
+    print("Proje 3 - Programlama Lab I\n")
+
+    # Neo4j bağlantısı
+    if not connect_to_neo4j():
+        print("Program Neo4j bağlantısı olmadan çalıştırılamaz.")
+        return
+
+    # Menüyü başlat
+    show_menu()
+
+    # Bağlantıyı kapat
+    if driver:
+        driver.close()
+        print("Bağlantı kapatıldı.")
+
+
+# ------------------ ÇALIŞTIR ------------------
+if __name__ == "__main__":
+    main()
