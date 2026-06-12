@@ -1,0 +1,690 @@
+-----------------------
+MAİN.PY
+-----------------------
+
+import customtkinter as ctk
+from tkinter import messagebox
+import mysql.connector
+from datetime import datetime
+
+db = mysql.connector.connect(
+    host="localhost",
+    user="root",
+    password="12345",
+    database="netflixdb"
+)
+
+cursor = db.cursor()
+
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("dark-blue")
+
+app = ctk.CTk()
+app.geometry("1200x720")
+app.title("StreamBox İçerik Platformu")
+
+aktif_kullanici = None
+
+
+def temizle():
+    for widget in app.winfo_children():
+        widget.destroy()
+
+
+def tablo_hazirla():
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS Favori (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        kullanici_id INT,
+        program_id INT
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS IzlemeLog (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        kullanici_id INT,
+        program_id INT,
+        izleme_tarihi DATETIME,
+        izleme_suresi INT,
+        puan INT,
+        tamamlandi VARCHAR(20)
+    )
+    """)
+
+    cursor.execute("SELECT COUNT(*) FROM Kullanici WHERE email='admin@gmail.com'")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("""
+        INSERT INTO Kullanici(ad, email, sifre)
+        VALUES ('Admin', 'admin@gmail.com', '123456')
+        """)
+
+    db.commit()
+
+
+def menu_button(parent, text, command):
+    return ctk.CTkButton(
+        parent,
+        text=text,
+        command=command,
+        fg_color="#242424",
+        hover_color="#5c1f2d",
+        height=42,
+        corner_radius=12
+    )
+
+
+def action_button(parent, text, command):
+    return ctk.CTkButton(
+        parent,
+        text=text,
+        command=command,
+        fg_color="#8b1e3f",
+        hover_color="#b02a4b",
+        height=35,
+        corner_radius=10
+    )
+
+
+def giris_ekrani():
+    temizle()
+
+    container = ctk.CTkFrame(app, width=430, height=520, corner_radius=25)
+    container.place(relx=0.5, rely=0.5, anchor="center")
+
+    ctk.CTkLabel(
+        container,
+        text="STREAMBOX",
+        font=("Arial", 42, "bold"),
+        text_color="#e63946"
+    ).pack(pady=45)
+
+    email_entry = ctk.CTkEntry(container, placeholder_text="E-mail", width=310, height=42)
+    email_entry.pack(pady=8)
+
+    sifre_entry = ctk.CTkEntry(container, placeholder_text="Şifre", show="*", width=310, height=42)
+    sifre_entry.pack(pady=8)
+
+    def giris_yap():
+        global aktif_kullanici
+
+        cursor.execute(
+            "SELECT id, ad, email FROM Kullanici WHERE email=%s AND sifre=%s",
+            (email_entry.get(), sifre_entry.get())
+        )
+
+        sonuc = cursor.fetchone()
+
+        if sonuc:
+            aktif_kullanici = sonuc
+            if sonuc[2] == "admin@gmail.com":
+                admin_panel()
+            else:
+                ana_sayfa()
+        else:
+            messagebox.showerror("Hata", "E-mail veya şifre hatalı.")
+
+    action_button(container, "Giriş Yap", giris_yap).pack(pady=18)
+    menu_button(container, "Kayıt Ol", kayit_ekrani).pack(pady=5)
+
+
+def kayit_ekrani():
+    temizle()
+
+    frame = ctk.CTkFrame(app, width=500, height=600, corner_radius=25)
+    frame.place(relx=0.5, rely=0.5, anchor="center")
+
+    ctk.CTkLabel(frame, text="Yeni Kullanıcı Kaydı", font=("Arial", 30, "bold"), text_color="#e63946").pack(pady=25)
+
+    ad = ctk.CTkEntry(frame, placeholder_text="Ad", width=330)
+    ad.pack(pady=6)
+
+    email = ctk.CTkEntry(frame, placeholder_text="E-mail", width=330)
+    email.pack(pady=6)
+
+    sifre = ctk.CTkEntry(frame, placeholder_text="Şifre", show="*", width=330)
+    sifre.pack(pady=6)
+
+    sifre_tekrar = ctk.CTkEntry(frame, placeholder_text="Şifre Tekrar", show="*", width=330)
+    sifre_tekrar.pack(pady=6)
+
+    def kaydet():
+        if ad.get() == "" or email.get() == "" or sifre.get() == "":
+            messagebox.showwarning("Uyarı", "Boş alan bırakılmamalıdır.")
+            return
+
+        if "@" not in email.get():
+            messagebox.showwarning("Uyarı", "Geçerli e-mail giriniz.")
+            return
+
+        if len(sifre.get()) < 6:
+            messagebox.showwarning("Uyarı", "Şifre en az 6 karakter olmalıdır.")
+            return
+
+        if sifre.get() != sifre_tekrar.get():
+            messagebox.showwarning("Uyarı", "Şifreler aynı olmalıdır.")
+            return
+
+        cursor.execute("SELECT COUNT(*) FROM Kullanici WHERE email=%s", (email.get(),))
+        if cursor.fetchone()[0] > 0:
+            messagebox.showerror("Hata", "Bu e-mail zaten kayıtlıdır.")
+            return
+
+        cursor.execute(
+            "INSERT INTO Kullanici(ad, email, sifre) VALUES (%s, %s, %s)",
+            (ad.get(), email.get(), sifre.get())
+        )
+
+        db.commit()
+        messagebox.showinfo("Başarılı", "Kayıt tamamlandı.")
+        giris_ekrani()
+
+    action_button(frame, "Kaydı Tamamla", kaydet).pack(pady=18)
+    menu_button(frame, "Geri Dön", giris_ekrani).pack()
+
+
+def layout():
+    temizle()
+
+    sidebar = ctk.CTkFrame(app, width=220, corner_radius=0)
+    sidebar.pack(side="left", fill="y")
+
+    ctk.CTkLabel(
+        sidebar,
+        text="STREAMBOX",
+        font=("Arial", 26, "bold"),
+        text_color="#e63946"
+    ).pack(pady=30)
+
+    menu_button(sidebar, "Ana Sayfa", ana_sayfa).pack(fill="x", padx=15, pady=7)
+    menu_button(sidebar, "Favorilerim", favoriler_sayfasi).pack(fill="x", padx=15, pady=7)
+    menu_button(sidebar, "İzleme Geçmişi", gecmis_sayfasi).pack(fill="x", padx=15, pady=7)
+    menu_button(sidebar, "Profil", profil_sayfasi).pack(fill="x", padx=15, pady=7)
+    menu_button(sidebar, "Çıkış Yap", giris_ekrani).pack(fill="x", padx=15, pady=30)
+
+    content = ctk.CTkFrame(app, corner_radius=0)
+    content.pack(side="right", fill="both", expand=True)
+
+    return content
+
+
+def ana_sayfa():
+    content = layout()
+
+    top = ctk.CTkFrame(content, height=90, corner_radius=0)
+    top.pack(fill="x")
+
+    ctk.CTkLabel(
+        top,
+        text="İçerik Kataloğu",
+        font=("Arial", 30, "bold")
+    ).pack(side="left", padx=30, pady=25)
+
+    arama = ctk.CTkEntry(top, placeholder_text="İçerik ara...", width=300)
+    arama.pack(side="right", padx=10)
+
+    tip = ctk.CTkEntry(top, placeholder_text="Film / Dizi", width=150)
+    tip.pack(side="right", padx=10)
+
+    tur = ctk.CTkEntry(top, placeholder_text="Tür", width=150)
+    tur.pack(side="right", padx=10)
+
+    liste = ctk.CTkScrollableFrame(content)
+    liste.pack(fill="both", expand=True, padx=25, pady=15)
+
+    def listele():
+        for widget in liste.winfo_children():
+            widget.destroy()
+
+        cursor.execute("""
+        SELECT id, program_adi, tip, yayin_yili, sure, tur, aciklama
+        FROM Program
+        WHERE program_adi LIKE %s
+        AND tip LIKE %s
+        AND tur LIKE %s
+        LIMIT 150
+        """, (
+            "%" + arama.get() + "%",
+            "%" + tip.get() + "%",
+            "%" + tur.get() + "%"
+        ))
+
+        for veri in cursor.fetchall():
+            program_id, ad, p_tip, yil, sure, p_tur, aciklama = veri
+
+            kart = ctk.CTkFrame(liste, corner_radius=18)
+            kart.pack(fill="x", padx=10, pady=10)
+
+            ctk.CTkLabel(
+                kart,
+                text=str(ad),
+                font=("Arial", 21, "bold"),
+                text_color="#ffffff"
+            ).pack(anchor="w", padx=18, pady=6)
+
+            ctk.CTkLabel(
+                kart,
+                text=f"{p_tip} • {yil} • {sure} • {p_tur}",
+                text_color="#bbbbbb"
+            ).pack(anchor="w", padx=18)
+
+            buttons = ctk.CTkFrame(kart, fg_color="transparent")
+            buttons.pack(anchor="w", padx=14, pady=10)
+
+            action_button(buttons, "Detay", lambda x=program_id: detay_sayfasi(x)).pack(side="left", padx=5)
+            action_button(buttons, "Favori", lambda x=program_id: favori_ekle(x)).pack(side="left", padx=5)
+            action_button(buttons, "İzle", lambda x=program_id: izleme_sayfasi(x)).pack(side="left", padx=5)
+
+    action_button(top, "Ara", listele).pack(side="right", padx=10)
+    listele()
+
+
+def detay_sayfasi(program_id):
+    content = layout()
+
+    cursor.execute("""
+    SELECT program_adi, tip, yayin_yili, sure, tur, aciklama
+    FROM Program WHERE id=%s
+    """, (program_id,))
+
+    veri = cursor.fetchone()
+
+    if not veri:
+        ana_sayfa()
+        return
+
+    ad, tip, yil, sure, tur, aciklama = veri
+
+    cursor.execute("SELECT AVG(puan), COUNT(*) FROM IzlemeLog WHERE program_id=%s", (program_id,))
+    ortalama, puan_sayisi = cursor.fetchone()
+    ortalama = round(ortalama, 2) if ortalama else 0
+
+    cursor.execute("SELECT COUNT(*) FROM IzlemeLog WHERE program_id=%s", (program_id,))
+    izlenme = cursor.fetchone()[0]
+
+    box = ctk.CTkFrame(content, corner_radius=25)
+    box.pack(fill="both", expand=True, padx=40, pady=40)
+
+    ctk.CTkLabel(box, text=str(ad), font=("Arial", 34, "bold"), text_color="#e63946").pack(pady=25)
+
+    bilgi = f"Tip: {tip}\nYayın Yılı: {yil}\nSüre: {sure}\nTür: {tur}\nOrtalama Puan: {ortalama}\nPuan Sayısı: {puan_sayisi}\nToplam İzlenme: {izlenme}"
+
+    ctk.CTkLabel(box, text=bilgi, font=("Arial", 17), justify="left").pack(pady=10)
+    ctk.CTkLabel(box, text=str(aciklama), wraplength=750, text_color="#bbbbbb").pack(pady=20)
+
+    action_button(box, "Favorilere Ekle", lambda: favori_ekle(program_id)).pack(pady=5)
+    action_button(box, "İzle ve Puan Ver", lambda: izleme_sayfasi(program_id)).pack(pady=5)
+
+
+def favori_ekle(program_id):
+    cursor.execute(
+        "SELECT COUNT(*) FROM Favori WHERE kullanici_id=%s AND program_id=%s",
+        (aktif_kullanici[0], program_id)
+    )
+
+    if cursor.fetchone()[0] == 0:
+        cursor.execute(
+            "INSERT INTO Favori(kullanici_id, program_id) VALUES (%s, %s)",
+            (aktif_kullanici[0], program_id)
+        )
+        db.commit()
+        messagebox.showinfo("Başarılı", "İçerik favorilere eklendi.")
+    else:
+        messagebox.showinfo("Bilgi", "Bu içerik zaten favorilerde.")
+
+
+def izleme_sayfasi(program_id):
+    content = layout()
+
+    cursor.execute("SELECT program_adi FROM Program WHERE id=%s", (program_id,))
+    ad = cursor.fetchone()[0]
+
+    box = ctk.CTkFrame(content, corner_radius=25)
+    box.pack(pady=60, padx=60, fill="both", expand=True)
+
+    ctk.CTkLabel(box, text="İzleme Ekranı", font=("Arial", 32, "bold"), text_color="#e63946").pack(pady=25)
+    ctk.CTkLabel(box, text=str(ad), font=("Arial", 22, "bold")).pack(pady=10)
+
+    sure = ctk.CTkEntry(box, placeholder_text="İzleme süresi dakika", width=280)
+    sure.pack(pady=8)
+
+    puan = ctk.CTkEntry(box, placeholder_text="Puan 1-10", width=280)
+    puan.pack(pady=8)
+
+    def kaydet(tamamlandi):
+        try:
+            izleme_suresi = int(sure.get())
+            verilen_puan = int(puan.get())
+        except:
+            messagebox.showwarning("Uyarı", "Süre ve puan sayı olmalıdır.")
+            return
+
+        if verilen_puan < 1 or verilen_puan > 10:
+            messagebox.showwarning("Uyarı", "Puan 1 ile 10 arasında olmalıdır.")
+            return
+
+        cursor.execute("""
+        INSERT INTO IzlemeLog
+        (kullanici_id, program_id, izleme_tarihi, izleme_suresi, puan, tamamlandi)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """, (
+            aktif_kullanici[0],
+            program_id,
+            datetime.now(),
+            izleme_suresi,
+            verilen_puan,
+            tamamlandi
+        ))
+
+        db.commit()
+        messagebox.showinfo("Başarılı", "İzleme bilgisi kaydedildi.")
+        ana_sayfa()
+
+    action_button(box, "İzlemeyi Tamamla", lambda: kaydet("Evet")).pack(pady=8)
+    action_button(box, "Kaldığım Yere Kaydet", lambda: kaydet("Hayır")).pack(pady=8)
+
+
+def favoriler_sayfasi():
+    content = layout()
+
+    ctk.CTkLabel(content, text="Favorilerim", font=("Arial", 32, "bold"), text_color="#e63946").pack(pady=25)
+
+    liste = ctk.CTkScrollableFrame(content)
+    liste.pack(fill="both", expand=True, padx=30, pady=15)
+
+    cursor.execute("""
+    SELECT Program.id, Program.program_adi, Program.tip, Program.tur
+    FROM Favori
+    INNER JOIN Program ON Favori.program_id = Program.id
+    WHERE Favori.kullanici_id=%s
+    """, (aktif_kullanici[0],))
+
+    for program_id, ad, tip, tur in cursor.fetchall():
+        kart = ctk.CTkFrame(liste, corner_radius=15)
+        kart.pack(fill="x", pady=8, padx=10)
+
+        ctk.CTkLabel(kart, text=f"{ad}  |  {tip}  |  {tur}", font=("Arial", 16)).pack(side="left", padx=15)
+
+        def sil(pid=program_id):
+            cursor.execute(
+                "DELETE FROM Favori WHERE kullanici_id=%s AND program_id=%s",
+                (aktif_kullanici[0], pid)
+            )
+            db.commit()
+            favoriler_sayfasi()
+
+        action_button(kart, "Favoriden Çıkar", sil).pack(side="right", padx=10, pady=8)
+
+
+def gecmis_sayfasi():
+    content = layout()
+
+    ctk.CTkLabel(content, text="İzleme Geçmişi", font=("Arial", 32, "bold"), text_color="#e63946").pack(pady=25)
+
+    liste = ctk.CTkScrollableFrame(content)
+    liste.pack(fill="both", expand=True, padx=30, pady=15)
+
+    cursor.execute("""
+    SELECT Program.program_adi, IzlemeLog.izleme_tarihi, IzlemeLog.izleme_suresi, IzlemeLog.puan, IzlemeLog.tamamlandi
+    FROM IzlemeLog
+    INNER JOIN Program ON IzlemeLog.program_id = Program.id
+    WHERE IzlemeLog.kullanici_id=%s
+    ORDER BY IzlemeLog.izleme_tarihi DESC
+    """, (aktif_kullanici[0],))
+
+    for ad, tarih, sure, puan, tamamlandi in cursor.fetchall():
+        ctk.CTkLabel(
+            liste,
+            text=f"{ad} | {tarih} | {sure} dk | Puan: {puan} | Tamamlandı: {tamamlandi}",
+            font=("Arial", 15)
+        ).pack(anchor="w", padx=15, pady=6)
+
+
+def profil_sayfasi():
+    content = layout()
+
+    ctk.CTkLabel(content, text="Profil Bilgileri", font=("Arial", 32, "bold"), text_color="#e63946").pack(pady=30)
+
+    cursor.execute("SELECT ad, email FROM Kullanici WHERE id=%s", (aktif_kullanici[0],))
+    ad, email = cursor.fetchone()
+
+    cursor.execute("SELECT SUM(izleme_suresi), COUNT(*), AVG(puan) FROM IzlemeLog WHERE kullanici_id=%s", (aktif_kullanici[0],))
+    toplam_sure, izlenen_sayi, ortalama_puan = cursor.fetchone()
+
+    toplam_sure = toplam_sure if toplam_sure else 0
+    izlenen_sayi = izlenen_sayi if izlenen_sayi else 0
+    ortalama_puan = round(ortalama_puan, 2) if ortalama_puan else 0
+
+    bilgiler = f"""
+Ad: {ad}
+E-mail: {email}
+Toplam İzleme Süresi: {toplam_sure} dakika
+İzlenen İçerik Sayısı: {izlenen_sayi}
+Verilen Ortalama Puan: {ortalama_puan}
+"""
+
+    ctk.CTkLabel(content, text=bilgiler, font=("Arial", 20), justify="left").pack(pady=20)
+
+
+def admin_panel():
+    temizle()
+
+    sidebar = ctk.CTkFrame(app, width=220, corner_radius=0)
+    sidebar.pack(side="left", fill="y")
+
+    ctk.CTkLabel(sidebar, text="YÖNETİM", font=("Arial", 28, "bold"), text_color="#e63946").pack(pady=30)
+
+    menu_button(sidebar, "İçerik Yönetimi", admin_icerikler).pack(fill="x", padx=15, pady=8)
+    menu_button(sidebar, "Kullanıcılar", admin_kullanicilar).pack(fill="x", padx=15, pady=8)
+    menu_button(sidebar, "Raporlar", admin_raporlar).pack(fill="x", padx=15, pady=8)
+    menu_button(sidebar, "Çıkış", giris_ekrani).pack(fill="x", padx=15, pady=30)
+
+    content = ctk.CTkFrame(app, corner_radius=0)
+    content.pack(side="right", fill="both", expand=True)
+
+    return content
+
+
+def admin_icerikler():
+    content = admin_panel()
+
+    ctk.CTkLabel(content, text="İçerik Yönetimi", font=("Arial", 32, "bold"), text_color="#e63946").pack(pady=20)
+
+    form = ctk.CTkFrame(content)
+    form.pack(pady=10)
+
+    ad = ctk.CTkEntry(form, placeholder_text="Program adı", width=170)
+    ad.grid(row=0, column=0, padx=4, pady=6)
+
+    tip = ctk.CTkEntry(form, placeholder_text="Tip", width=100)
+    tip.grid(row=0, column=1, padx=4)
+
+    yil = ctk.CTkEntry(form, placeholder_text="Yıl", width=80)
+    yil.grid(row=0, column=2, padx=4)
+
+    sure = ctk.CTkEntry(form, placeholder_text="Süre", width=90)
+    sure.grid(row=0, column=3, padx=4)
+
+    tur = ctk.CTkEntry(form, placeholder_text="Tür", width=150)
+    tur.grid(row=0, column=4, padx=4)
+
+    aciklama = ctk.CTkEntry(form, placeholder_text="Açıklama", width=230)
+    aciklama.grid(row=0, column=5, padx=4)
+
+    def ekle():
+        cursor.execute("""
+        INSERT INTO Program(program_adi, tip, yayin_yili, sure, tur, aciklama)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """, (ad.get(), tip.get(), yil.get(), sure.get(), tur.get(), aciklama.get()))
+        db.commit()
+        admin_icerikler()
+
+    action_button(form, "Ekle", ekle).grid(row=0, column=6, padx=5)
+
+    liste = ctk.CTkScrollableFrame(content)
+    liste.pack(fill="both", expand=True, padx=30, pady=15)
+
+    cursor.execute("SELECT id, program_adi, tip, yayin_yili, tur FROM Program LIMIT 150")
+
+    for pid, p_ad, p_tip, p_yil, p_tur in cursor.fetchall():
+        satir = ctk.CTkFrame(liste)
+        satir.pack(fill="x", padx=8, pady=5)
+
+        ctk.CTkLabel(satir, text=f"{pid} - {p_ad} | {p_tip} | {p_yil} | {p_tur}").pack(side="left", padx=10)
+
+        def sil(x=pid):
+            cursor.execute("DELETE FROM Program WHERE id=%s", (x,))
+            db.commit()
+            admin_icerikler()
+
+        action_button(satir, "Sil", sil).pack(side="right", padx=10, pady=5)
+
+
+def admin_kullanicilar():
+    content = admin_panel()
+
+    ctk.CTkLabel(content, text="Kullanıcı Yönetimi", font=("Arial", 32, "bold"), text_color="#e63946").pack(pady=25)
+
+    liste = ctk.CTkScrollableFrame(content)
+    liste.pack(fill="both", expand=True, padx=30, pady=15)
+
+    cursor.execute("SELECT id, ad, email FROM Kullanici")
+
+    for kid, ad, email in cursor.fetchall():
+        cursor.execute("SELECT SUM(izleme_suresi), COUNT(*) FROM IzlemeLog WHERE kullanici_id=%s", (kid,))
+        sure, sayi = cursor.fetchone()
+        sure = sure if sure else 0
+        sayi = sayi if sayi else 0
+
+        ctk.CTkLabel(
+            liste,
+            text=f"{kid} | {ad} | {email} | Toplam Süre: {sure} dk | İçerik Sayısı: {sayi}",
+            font=("Arial", 15)
+        ).pack(anchor="w", padx=12, pady=6)
+
+
+def admin_raporlar():
+    content = admin_panel()
+
+    ctk.CTkLabel(content, text="Raporlama", font=("Arial", 32, "bold"), text_color="#e63946").pack(pady=25)
+
+    liste = ctk.CTkScrollableFrame(content)
+    liste.pack(fill="both", expand=True, padx=30, pady=15)
+
+    cursor.execute("""
+    SELECT Program.program_adi, COUNT(IzlemeLog.id)
+    FROM Program
+    LEFT JOIN IzlemeLog ON Program.id = IzlemeLog.program_id
+    GROUP BY Program.id
+    ORDER BY COUNT(IzlemeLog.id) DESC
+    LIMIT 10
+    """)
+
+    ctk.CTkLabel(liste, text="En Çok İzlenen İçerikler", font=("Arial", 22, "bold")).pack(pady=10)
+
+    for ad, sayi in cursor.fetchall():
+        ctk.CTkLabel(liste, text=f"{ad} - İzlenme: {sayi}").pack(anchor="w", padx=20)
+
+    cursor.execute("""
+    SELECT Program.program_adi, AVG(IzlemeLog.puan)
+    FROM Program
+    INNER JOIN IzlemeLog ON Program.id = IzlemeLog.program_id
+    GROUP BY Program.id
+    ORDER BY AVG(IzlemeLog.puan) DESC
+    LIMIT 10
+    """)
+
+    ctk.CTkLabel(liste, text="En Yüksek Puanlı İçerikler", font=("Arial", 22, "bold")).pack(pady=15)
+
+    for ad, ortalama in cursor.fetchall():
+        ctk.CTkLabel(liste, text=f"{ad} - Ortalama Puan: {round(ortalama, 2)}").pack(anchor="w", padx=20)
+
+
+tablo_hazirla()
+giris_ekrani()
+app.mainloop()
+
+---------------------------
+EXCEL_AKTAR.PY
+---------------------------
+
+import openpyxl
+import mysql.connector
+from tkinter import Tk, filedialog
+
+db = mysql.connector.connect(
+    host="localhost",
+    user="root",
+    password="12345",
+    database="netflixdb"
+)
+
+cursor = db.cursor()
+
+cursor.execute("DROP TABLE IF EXISTS Program")
+
+cursor.execute("""
+CREATE TABLE Program (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    program_adi VARCHAR(255),
+    tip VARCHAR(100),
+    yayin_yili VARCHAR(50),
+    sure VARCHAR(100),
+    tur VARCHAR(255),
+    aciklama TEXT
+)
+""")
+
+pencere = Tk()
+pencere.withdraw()
+
+dosya = filedialog.askopenfilename(
+    title="Excel dosyasını seçiniz",
+    filetypes=[("Excel Dosyaları", "*.xlsx")]
+)
+
+if dosya == "":
+    print("Dosya seçilmedi.")
+    exit()
+
+workbook = openpyxl.load_workbook(dosya)
+sheet = workbook.active
+
+for row in sheet.iter_rows(min_row=2, values_only=True):
+    row = list(row)
+
+    program_adi = row[0] if len(row) > 0 else ""
+    tip = row[1] if len(row) > 1 else ""
+    yayin_yili = row[2] if len(row) > 2 else ""
+    sure = row[3] if len(row) > 3 else ""
+    tur = row[4] if len(row) > 4 else ""
+    aciklama = row[5] if len(row) > 5 else ""
+
+    if program_adi is None or str(program_adi).strip() == "":
+        continue
+
+    cursor.execute("""
+        INSERT INTO Program
+        (program_adi, tip, yayin_yili, sure, tur, aciklama)
+        VALUES (%s, %s, %s, %s, %s, %s)
+    """, (program_adi, tip, yayin_yili, sure, tur, aciklama))
+
+db.commit()
+db.close()
+
+print("Veriler başarıyla aktarıldı.")
+
+
+---------------------------------------
+DB.PY
+---------------------------------------
+import mysql.connector
+
+db = mysql.connector.connect(
+    host="localhost",
+    user="root",
+    password="12345",
+    database="netflixdb"
+)
+
+cursor = db.cursor()

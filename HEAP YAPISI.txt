@@ -1,0 +1,189 @@
+import os
+import re
+
+
+class WordNode:
+    def __init__(self, word):
+        self.word = word.lower()
+        self.first_char = self.word[0]
+        self.count = 1
+
+    def __repr__(self):
+        return f"{self.word}:{self.count}"
+
+
+class CustomTwoKeyHeap:
+    def __init__(self, verbose=False):
+        self.heap = []
+        self.verbose = verbose
+
+    def _compare(self, node1, node2):
+        if node1.first_char != node2.first_char:
+            return node1.first_char < node2.first_char
+
+        if node1.count != node2.count:
+            return node1.count > node2.count
+
+        return node1.word < node2.word
+
+    def _heapify_up(self, index):
+        while index > 0:
+            parent = (index - 1) // 2
+
+            if self._compare(self.heap[index], self.heap[parent]):
+                if self.verbose:
+                    print(f'↑ Swap: [{index}] "{self.heap[index].word}" ↔ [{parent}] "{self.heap[parent].word}"')
+
+                self.heap[index], self.heap[parent] = self.heap[parent], self.heap[index]
+                index = parent
+            else:
+                break
+
+    def _heapify_down(self, index):
+        size = len(self.heap)
+
+        while True:
+            left = 2 * index + 1
+            right = 2 * index + 2
+            priority_index = index
+
+            if left < size and self._compare(self.heap[left], self.heap[priority_index]):
+                priority_index = left
+
+            if right < size and self._compare(self.heap[right], self.heap[priority_index]):
+                priority_index = right
+
+            if priority_index != index:
+                if self.verbose:
+                    print(f'↓ Swap: [{index}] "{self.heap[index].word}" ↔ [{priority_index}] "{self.heap[priority_index].word}"')
+
+                self.heap[index], self.heap[priority_index] = self.heap[priority_index], self.heap[index]
+                index = priority_index
+            else:
+                break
+
+    def heap_status(self):
+        return "[" + " | ".join(str(node) for node in self.heap) + "]"
+
+    def insert_or_update(self, word):
+        target_word = word.lower()
+        found_index = -1
+
+        for i, node in enumerate(self.heap):
+            if node.word == target_word:
+                found_index = i
+                break
+
+        if found_index == -1:
+            new_node = WordNode(word)
+            self.heap.append(new_node)
+
+            if self.verbose:
+                print(f'YENİ KELİME "{target_word}" → indeks {len(self.heap) - 1} eklendi')
+
+            self._heapify_up(len(self.heap) - 1)
+
+        else:
+            self.heap[found_index].count += 1
+
+            if self.verbose:
+                print(f'GÜNCELLEME "{target_word}" → frekans: {self.heap[found_index].count}')
+
+            self._heapify_up(found_index)
+            self._heapify_down(found_index)
+
+        if self.verbose:
+            print("Heap durumu:", self.heap_status())
+
+    def pop(self):
+        if not self.heap:
+            return None
+
+        if len(self.heap) == 1:
+            return self.heap.pop()
+
+        root = self.heap[0]
+        self.heap[0] = self.heap.pop()
+        self._heapify_down(0)
+
+        return root
+
+    def is_empty(self):
+        return len(self.heap) == 0
+
+
+def process_txt_file(file_path, verbose=False):
+    if not file_path.endswith(".txt"):
+        file_path += ".txt"
+
+    if not os.path.exists(file_path):
+        print(f"Hata: '{file_path}' dosyası bulunamadı!")
+        return
+
+    heap = CustomTwoKeyHeap(verbose)
+    total_words = 0
+    line_count = 0
+
+    with open(file_path, "r", encoding="utf-8") as file:
+        for line in file:
+            line_count += 1
+            words = re.findall(r"\b\w+\b", line)
+
+            for word in words:
+                if word.isalpha():
+                    heap.insert_or_update(word)
+                    total_words += 1
+
+    unique_words = len(heap.heap)
+
+    most_word = None
+    most_count = 0
+
+    for node in heap.heap:
+        if node.count > most_count:
+            most_word = node.word
+            most_count = node.count
+
+    print("\n==============================================")
+    print(" TXT KELİME FREKANS ANALİZİ - HEAP UYGULAMASI ")
+    print("==============================================")
+
+    print(f"\nDosya              : {os.path.basename(file_path)}")
+    print(f"Satır              : {line_count}")
+    print(f"Toplam kelime      : {total_words}")
+    print(f"Benzersiz kelime   : {unique_words}")
+
+    if most_word:
+        print(f'En sık geçen kelime: "{most_word}" ({most_count} kez)')
+
+    print("\n----------------------------------------------")
+    print(f"{'KELİME':<15} {'FREKANS':<10} {'GÖRSEL DAĞILIM'}")
+    print("----------------------------------------------")
+
+    while not heap.is_empty():
+        node = heap.pop()
+        bar = "█" * node.count
+        print(f"{node.word:<15} {node.count:<10} {bar}")
+
+    print("----------------------------------------------")
+
+
+if __name__ == "__main__":
+    print("TXT Kelime Frekans Analizi - Heap")
+    print("2 Anahtarlı Min-Heap Uygulaması\n")
+
+    print("Komutlar:")
+    print("<dosya adı>       -> Normal mod")
+    print("<dosya adı> -v    -> Verbose mod")
+    print("q / ç             -> Çıkış\n")
+
+    komut = input("Dosya adı veya tam yolu: ").strip()
+
+    if komut.lower() in ["q", "ç"]:
+        print("Programdan çıkıldı.")
+    else:
+        parcalar = komut.split()
+        dosya_yolu = parcalar[0]
+        verbose = "-v" in parcalar
+
+        process_txt_file(dosya_yolu, verbose)
